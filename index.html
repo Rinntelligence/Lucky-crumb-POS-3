@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+<title>The Lucky Crumb — POS System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
+<style>
+:root {
+  --cream: #f5f0e8;
+  --paper: #ede7d9;
+  --sand: #d9d0bc;
+  --blue: #1a4fd6;
+  --blue-dark: #1340b0;
+  --blue-deep: #0d2d7a;
+  --blue-pale: #dce8ff;
+  --white: #fff;
+  --ink: #0d1f4a;
+  --muted: #6a7a9a;
+}
+*, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; padding: 0; height: 100%; font-family: 'DM Sans', sans-serif; }
+body { background: var(--cream); overflow: hidden; }
+input, textarea, select { -webkit-appearance: none; appearance: none; font-family: inherit; }
+button { font-family: inherit; cursor: pointer; }
+::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar-thumb { background: var(--sand); border-radius: 3px; }
+
+@keyframes fadeUp { from { opacity:0; transform:translate(-50%,10px); } to { opacity:1; transform:translate(-50%,0); } }
+@keyframes slideUp { from { transform:translateY(100%); } to { transform:translateY(0); } }
+@keyframes popIn { from { opacity:0; transform:scale(.88); } to { opacity:1; transform:scale(1); } }
+
+#app { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+// ── BRAND ────────────────────────────────────────────────────────────────────
+const T = {
+  cream:"#f5f0e8", paper:"#ede7d9", sand:"#d9d0bc",
+  blue:"#1a4fd6", blueDark:"#1340b0", blueDeep:"#0d2d7a", bluePale:"#dce8ff",
+  white:"#fff", ink:"#0d1f4a", muted:"#6a7a9a"
+};
+
+const STATUS = {
+  pending:   { label:"New",       color:"#1a4fd6", bg:"#dce8ff", next:"preparing" },
+  preparing: { label:"On It",     color:"#d97706", bg:"#fef3c7", next:"ready" },
+  ready:     { label:"Ready! 🔔", color:"#16a34a", bg:"#dcfce7", next:"served" },
+  served:    { label:"Served",    color:"#6a7a9a", bg:"#eef0f5", next:null },
+};
+
+const DEFAULT_MENU = {
+  categories: ["Breakfast","Lunch","Drinks","Sweets"],
+  items: [
+    {id:"b1",name:"Avocado Toast",category:"Breakfast",price:95,emoji:"🥑"},
+    {id:"b2",name:"Eggs Benedict",category:"Breakfast",price:115,emoji:"🍳"},
+    {id:"b3",name:"Granola Bowl",category:"Breakfast",price:75,emoji:"🥣"},
+    {id:"b4",name:"Pancake Stack",category:"Breakfast",price:95,emoji:"🥞"},
+    {id:"l1",name:"The Crumb Club",category:"Lunch",price:110,emoji:"🥪"},
+    {id:"l2",name:"Burrata Salad",category:"Lunch",price:120,emoji:"🥗"},
+    {id:"l3",name:"Soup of the Day",category:"Lunch",price:70,emoji:"🍲"},
+    {id:"l4",name:"Croque Monsieur",category:"Lunch",price:100,emoji:"🫓"},
+    {id:"d1",name:"Flat White",category:"Drinks",price:38,emoji:"☕"},
+    {id:"d2",name:"Matcha Latte",category:"Drinks",price:42,emoji:"🍵"},
+    {id:"d3",name:"Fresh OJ",category:"Drinks",price:35,emoji:"🍊"},
+    {id:"d4",name:"Still Water",category:"Drinks",price:20,emoji:"💧"},
+    {id:"d5",name:"House Lemonade",category:"Drinks",price:38,emoji:"🍋"},
+    {id:"s1",name:"Croissant",category:"Sweets",price:32,emoji:"🥐"},
+    {id:"s2",name:"Banana Bread",category:"Sweets",price:36,emoji:"🍌"},
+    {id:"s3",name:"Cinnamon Roll",category:"Sweets",price:40,emoji:"🌀"},
+    {id:"s4",name:"Lemon Tart",category:"Sweets",price:45,emoji:"🍋"},
+  ]
+};
+
+const EMOJIS = ["🍳","🥐","🥞","🍔","🥪","🌮","🍕","🥗","🍲","🍜","☕","🍵","🥤","🍊","🍋","💧","🍰","🧁","🍮","🥧","🍫","🍪","🧇","🥨","🫓","🥑","🍌","🌀"];
+
+// ── HELPERS ──────────────────────────────────────────────────────────────────
+const genId = () => Math.random().toString(36).slice(2,9);
+const fmt = n => `R${Number(n).toFixed(2)}`;
+const $ = sel => document.querySelector(sel);
+const h = (tag, attrs, ...children) => {
+  const el = document.createElement(tag);
+  if (attrs) Object.entries(attrs).forEach(([k,v]) => {
+    if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (k === 'className') el.className = v;
+    else if (k === 'innerHTML') el.innerHTML = v;
+    else el.setAttribute(k, v);
+  });
+  children.flat(Infinity).forEach(c => {
+    if (c == null || c === false) return;
+    el.appendChild(typeof c === 'string' || typeof c === 'number' ? document.createTextNode(c) : c);
+  });
+  return el;
+};
+
+// ── LOCAL STORAGE (replaces shared storage for GitHub Pages) ─────────────────
+function loadData(key) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; }
+  catch { return null; }
+}
+function saveData(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+}
+
+// ── STATE ────────────────────────────────────────────────────────────────────
+let state = {
+  user: null,
+  orders: loadData('tlc-orders') || [],
+  menu: loadData('tlc-menu') || JSON.parse(JSON.stringify(DEFAULT_MENU)),
+  toast: null,
+  // Order view
+  activeCat: '',
+  cart: [],
+  tableNo: '',
+  note: '',
+  cartOpen: false,
+  // Admin view
+  adminTab: 'orders',
+  // Menu editor
+  editItem: null,
+  menuDraft: null,
+  menuActiveCat: '',
+  newCatName: '',
+  // Kitchen
+};
+let pollInterval = null;
+let toastTimeout = null;
+
+function showToast(msg) {
+  state.toast = msg;
+  render();
+  clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => { state.toast = null; render(); }, 2400);
+}
+
+// ── LOGO SVG STRING ──────────────────────────────────────────────────────────
+function logoSVG(size) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="50" cy="50" r="48" fill="${T.cream}" stroke="${T.blue}" stroke-width="2.5"/>
+    <rect x="2" y="38" width="96" height="24" fill="${T.blue}"/>
+    ${[0,1,2,3,4,5,6,7,8,9,10,11].map(i=>`<rect x="${2+i*8}" y="${38+(i%2===0?0:8)}" width="8" height="8" fill="${T.cream}" opacity="0.85"/>`).join('')}
+    <circle cx="50" cy="50" r="15" fill="${T.blue}"/>
+    <circle cx="50" cy="50" r="10" fill="${T.cream}"/>
+    <rect x="42" y="42" width="16" height="3" rx="1.5" fill="${T.blue}"/>
+    <rect x="41" y="40" width="13" height="3" rx="1.5" fill="${T.blue}"/>
+    <circle cx="46.5" cy="50" r="1.4" fill="${T.blue}"/>
+    <circle cx="53.5" cy="50" r="1.4" fill="${T.blue}"/>
+    <path d="M46.5 53.5 Q50 57 53.5 53.5" stroke="${T.blue}" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+    <rect x="57" y="52" width="7" height="5" rx="2.5" fill="${T.cream}" stroke="${T.blue}" stroke-width="1.2"/>
+    <circle cx="59" cy="54.5" r=".7" fill="${T.blue}"/>
+    <circle cx="62" cy="54.5" r=".7" fill="${T.blue}"/>
+  </svg>`;
+}
+
+function checkStrip(height) {
+  const d = h('div', { style: { display:'flex', overflow:'hidden', flexShrink:'0', height: height+'px' } });
+  for (let i = 0; i < 40; i++) {
+    d.appendChild(h('div', { style: { width: height+'px', height: height+'px', flexShrink:'0', background: i%2===0 ? T.blue : T.cream } }));
+  }
+  return d;
+}
+
+function badge(status) {
+  const s = STATUS[status];
+  return h('span', { style: {
+    display:'inline-block', padding:'3px 10px', borderRadius:'20px',
+    fontSize:'10px', fontWeight:'800', letterSpacing:'.6px',
+    color: s.color, background: s.bg, border: `1px solid ${s.color}40`,
+  }}, s.label.toUpperCase());
+}
+
+// ── SETUP SCREEN ─────────────────────────────────────────────────────────────
+function renderSetup() {
+  const app = $('#app');
+  app.innerHTML = '';
+  app.style.height = '100dvh';
+  app.style.display = 'block';
+  app.style.overflow = 'auto';
+
+  let selectedRole = 'order';
+  let nameVal = '';
+
+  const roles = [
+    { value:'order', icon:'🧾', label:'Order Taker', desc:'Take orders from tables' },
+    { value:'kitchen', icon:'👨‍🍳', label:'Kitchen Display', desc:'See & manage orders live' },
+    { value:'admin', icon:'⚙️', label:'Manager', desc:'Edit menu & view stats' },
+  ];
+
+  const wrapper = h('div', { style: {
+    minHeight:'100dvh',
+    background:`repeating-conic-gradient(${T.blue} 0% 25%, ${T.blueDeep} 0% 50%) 0 0 / 32px 32px`,
+    display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+    padding:'24px 20px',
+  }});
+
+  const inner = h('div', { style: { animation:'popIn .35s ease', width:'100%', maxWidth:'360px' }});
+
+  // Brand card
+  const brandCard = h('div', { style: {
+    background: T.cream, borderRadius:'20px', overflow:'hidden',
+    marginBottom:'14px', boxShadow:'0 20px 60px #00000060',
+    border: `3px solid ${T.blue}`,
+  }});
+  brandCard.appendChild(checkStrip(12));
+  const brandInner = h('div', { style: { padding:'24px 20px 16px', textAlign:'center' }});
+  const logoWrap = h('div', { style: { display:'flex', justifyContent:'center', marginBottom:'12px' }, innerHTML: logoSVG(96) });
+  brandInner.appendChild(logoWrap);
+  brandInner.appendChild(h('div', { style: { fontFamily:"'Bebas Neue',sans-serif", fontSize:'34px', color:T.ink, letterSpacing:'3px', lineHeight:'1' }}, 'THE LUCKY CRUMB'));
+  brandInner.appendChild(h('div', { style: { fontWeight:'700', fontSize:'10px', color:T.blue, letterSpacing:'4px', marginTop:'4px' }}, '— POS SYSTEM —'));
+  brandInner.appendChild(h('div', { style: { fontStyle:'italic', fontSize:'12px', color:T.muted, marginTop:'6px' }}, 'No crumb left uneaten'));
+  brandCard.appendChild(brandInner);
+  brandCard.appendChild(checkStrip(12));
+  inner.appendChild(brandCard);
+
+  // Login card
+  const loginCard = h('div', { style: {
+    background: T.white, borderRadius:'20px', padding:'20px',
+    boxShadow:'0 10px 40px #00000050', border: `3px solid ${T.blue}`,
+  }});
+
+  loginCard.appendChild(h('label', { style: { fontWeight:'800', fontSize:'11px', color:T.muted, letterSpacing:'1.5px', display:'block', marginBottom:'6px' }}, 'YOUR NAME'));
+  const nameInput = h('input', { placeholder:'e.g. Sarah', style: {
+    width:'100%', padding:'12px 14px', borderRadius:'12px',
+    border:`2px solid ${T.sand}`, fontSize:'15px', outline:'none',
+    color:T.ink, background:T.cream, marginBottom:'16px', transition:'border .15s',
+  }});
+  nameInput.addEventListener('input', e => { nameVal = e.target.value; updateEnterBtn(); });
+  nameInput.addEventListener('focus', () => nameInput.style.borderColor = T.blue);
+  nameInput.addEventListener('blur', () => nameInput.style.borderColor = T.sand);
+  loginCard.appendChild(nameInput);
+
+  loginCard.appendChild(h('label', { style: { fontWeight:'800', fontSize:'11px', color:T.muted, letterSpacing:'1.5px', display:'block', marginBottom:'8px' }}, 'YOUR ROLE'));
+
+  const rolesWrap = h('div', { style: { display:'flex', flexDirection:'column', gap:'8px', marginBottom:'20px' }});
+  const roleButtons = [];
+  roles.forEach(r => {
+    const btn = h('button', { style: {
+      display:'flex', alignItems:'center', gap:'12px',
+      padding:'11px 14px', borderRadius:'12px',
+      border: `2px solid ${r.value===selectedRole ? T.blue : T.sand}`,
+      background: r.value===selectedRole ? T.bluePale : T.cream,
+      textAlign:'left', transition:'all .15s', width:'100%',
+    }},
+      h('span', { style: { fontSize:'20px' }}, r.icon),
+      h('div', {},
+        h('div', { style: { fontWeight:'800', fontSize:'13px', color:T.ink }}, r.label),
+        h('div', { style: { fontSize:'11px', color:T.muted }}, r.desc),
+      ),
+    );
+    const check = h('span', { style: { marginLeft:'auto', color:T.blue, fontWeight:'900', fontSize:'18px', display: r.value===selectedRole?'inline':'none' }}, '✓');
+    btn.appendChild(check);
+    btn.addEventListener('click', () => {
+      selectedRole = r.value;
+      roleButtons.forEach((rb, idx) => {
+        const rv = roles[idx].value;
+        rb.btn.style.border = `2px solid ${rv===selectedRole?T.blue:T.sand}`;
+        rb.btn.style.background = rv===selectedRole?T.bluePale:T.cream;
+        rb.check.style.display = rv===selectedRole?'inline':'none';
+      });
+    });
+    roleButtons.push({ btn, check });
+    rolesWrap.appendChild(btn);
+  });
+  loginCard.appendChild(rolesWrap);
+
+  const enterBtn = h('button', { style: {
+    width:'100%', padding:'14px', borderRadius:'14px', border:'none',
+    background: T.sand, color: T.white,
+    fontWeight:'800', fontSize:'15px', cursor:'not-allowed', letterSpacing:'.5px', transition:'background .15s',
+  }}, 'ENTER →');
+  enterBtn.addEventListener('click', () => {
+    if (nameVal.trim()) {
+      state.user = { name: nameVal.trim(), role: selectedRole };
+      state.activeCat = state.menu.categories[0] || '';
+      startPoll();
+      render();
+    }
+  });
+  function updateEnterBtn() {
+    if (nameVal.trim()) {
+      enterBtn.style.background = T.blue;
+      enterBtn.style.cursor = 'pointer';
+    } else {
+      enterBtn.style.background = T.sand;
+      enterBtn.style.cursor = 'not-allowed';
+    }
+  }
+  loginCard.appendChild(enterBtn);
+  inner.appendChild(loginCard);
+  wrapper.appendChild(inner);
+  app.appendChild(wrapper);
+}
+
+// ── HEADER ───────────────────────────────────────────────────────────────────
+function renderHeader() {
+  const u = state.user;
+  const roleLabel = u.role==='order'?'ORDER TAKER':u.role==='kitchen'?'KITCHEN DISPLAY':'MANAGER';
+  const hdr = h('div', { style: { flexShrink:'0' }});
+  const bar = h('div', { style: { background:T.blue, padding:'10px 14px', display:'flex', alignItems:'center', gap:'10px' }});
+  bar.appendChild(h('div', { innerHTML: logoSVG(34) }));
+  const info = h('div', {},
+    h('div', { style: { fontFamily:"'Bebas Neue',sans-serif", fontSize:'18px', color:T.cream, letterSpacing:'2px', lineHeight:'1' }}, 'THE LUCKY CRUMB'),
+    h('div', { style: { fontSize:'10px', color:'#a8c4ff', fontWeight:'700', letterSpacing:'1.5px' }}, roleLabel),
+  );
+  bar.appendChild(info);
+  const userBadge = h('div', { style: { marginLeft:'auto', background:'#ffffff20', borderRadius:'20px', padding:'5px 12px', display:'flex', alignItems:'center', gap:'8px' }});
+  userBadge.appendChild(h('span', { style: { fontSize:'12px', color:T.cream, fontWeight:'700' }}, u.name));
+  const logoutBtn = h('button', { style: { background:'none', border:'none', color:'#ffffff60', fontSize:'15px', padding:'0', lineHeight:'1' }}, '↩');
+  logoutBtn.addEventListener('click', () => { stopPoll(); state.user = null; state.cart = []; state.cartOpen = false; render(); });
+  userBadge.appendChild(logoutBtn);
+  bar.appendChild(userBadge);
+  hdr.appendChild(bar);
+  hdr.appendChild(checkStrip(8));
+  return hdr;
+}
+
+// ── ORDER VIEW ───────────────────────────────────────────────────────────────
+function renderOrderView() {
+  const menu = state.menu;
+  const wrap = h('div', { style: { flex:'1', display:'flex', flexDirection:'column', overflow:'hidden', background:T.cream }});
+
+  // Top bar
+  const topBar = h('div', { style: { background:T.white, borderBottom:`2px solid ${T.sand}`, flexShrink:'0' }});
+  const tableRow = h('div', { style: { padding:'10px 14px 0', display:'flex', gap:'8px', alignItems:'center' }});
+  tableRow.appendChild(h('span', { style: { fontSize:'11px', fontWeight:'800', color:T.blue, letterSpacing:'1.5px' }}, 'TABLE'));
+  const tableInput = h('input', { placeholder:'# or name', value: state.tableNo, style: {
+    flex:'1', padding:'8px 12px', borderRadius:'10px',
+    border:`2px solid ${T.sand}`, fontSize:'13px', outline:'none',
+    color:T.ink, background:T.cream, transition:'border .15s',
+  }});
+  tableInput.addEventListener('input', e => { state.tableNo = e.target.value; });
+  tableInput.addEventListener('focus', () => tableInput.style.borderColor = T.blue);
+  tableInput.addEventListener('blur', () => tableInput.style.borderColor = T.sand);
+  tableRow.appendChild(tableInput);
+  topBar.appendChild(tableRow);
+
+  const catRow = h('div', { style: { display:'flex', gap:'6px', padding:'10px 14px', overflowX:'auto' }});
+  menu.categories.forEach(cat => {
+    const active = state.activeCat === cat;
+    const btn = h('button', { style: {
+      padding:'7px 16px', borderRadius:'20px',
+      border:`2px solid ${active?T.blue:T.sand}`,
+      fontWeight:'800', fontSize:'13px', whiteSpace:'nowrap', flexShrink:'0', transition:'all .15s',
+      background: active?T.blue:T.cream, color: active?T.white:T.muted,
+    }}, cat);
+    btn.addEventListener('click', () => { state.activeCat = cat; render(); });
+    catRow.appendChild(btn);
+  });
+  topBar.appendChild(catRow);
+  wrap.appendChild(topBar);
+
+  // Grid
+  const grid = h('div', { style: {
+    flex:'1', overflowY:'auto', padding:'12px 12px 110px',
+    display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:'10px', alignContent:'start',
+  }});
+  const filtered = menu.items.filter(i => i.category === state.activeCat);
+  filtered.forEach(item => {
+    const inCart = state.cart.find(x => x.id === item.id);
+    const btn = h('button', { style: {
+      background: inCart?T.blue:T.white,
+      border:`2px solid ${inCart?T.blue:T.sand}`,
+      borderRadius:'16px', padding:'14px 10px', textAlign:'center', transition:'all .15s',
+      position:'relative', boxShadow: inCart?`0 4px 18px ${T.blue}40`:'0 1px 4px #0001',
+    }},
+      h('div', { style: { fontSize:'30px' }}, item.emoji),
+      h('div', { style: { fontWeight:'800', fontSize:'13px', marginTop:'6px', lineHeight:'1.25', color: inCart?T.cream:T.ink }}, item.name),
+      h('div', { style: { fontSize:'12px', marginTop:'4px', fontWeight:'700', color: inCart?'#a8c4ff':T.blue }}, fmt(item.price)),
+    );
+    if (inCart) {
+      btn.appendChild(h('div', { style: { position:'absolute', top:'8px', right:'8px', background:T.cream, color:T.blue, borderRadius:'10px', fontSize:'11px', fontWeight:'900', padding:'1px 7px' }}, `×${inCart.qty}`));
+    }
+    btn.addEventListener('click', () => { addToCart(item); render(); });
+    grid.appendChild(btn);
+  });
+  if (!filtered.length) {
+    grid.appendChild(h('div', { style: { gridColumn:'1/-1', textAlign:'center', color:T.muted, padding:'32px', fontSize:'13px' }}, 'No items in this category'));
+  }
+  wrap.appendChild(grid);
+
+  // Cart button
+  const count = state.cart.reduce((s,i) => s+i.qty, 0);
+  const total = state.cart.reduce((s,i) => s+i.price*i.qty, 0);
+  if (count > 0) {
+    const cartBtn = h('button', { style: {
+      position:'fixed', bottom:'20px', left:'50%', transform:'translateX(-50%)',
+      background:T.blue, color:T.white, border:'none', borderRadius:'18px',
+      padding:'14px 28px', fontWeight:'800', fontSize:'15px',
+      boxShadow:`0 6px 24px ${T.blue}70`,
+      display:'flex', alignItems:'center', gap:'10px', zIndex:'200', whiteSpace:'nowrap',
+    }},
+      h('span', { style: { background:'#ffffff30', borderRadius:'10px', padding:'1px 9px', fontSize:'13px', fontWeight:'900' }}, String(count)),
+      `View Order · ${fmt(total)}`,
+    );
+    cartBtn.addEventListener('click', () => { state.cartOpen = true; render(); });
+    wrap.appendChild(cartBtn);
+  }
+
+  return wrap;
+}
+
+function addToCart(item) {
+  const ex = state.cart.find(x => x.id === item.id);
+  if (ex) ex.qty++;
+  else state.cart.push({ ...item, qty: 1 });
+}
+function decCart(id) {
+  const ex = state.cart.find(x => x.id === id);
+  if (!ex) return;
+  if (ex.qty === 1) state.cart = state.cart.filter(x => x.id !== id);
+  else ex.qty--;
+}
+
+// ── CART MODAL ───────────────────────────────────────────────────────────────
+function renderCartModal() {
+  const total = state.cart.reduce((s,i) => s+i.price*i.qty, 0);
+  return renderModal('Your Order', () => { state.cartOpen = false; render(); }, () => {
+    const content = h('div', { style: { padding:'12px 20px 28px' }});
+    state.cart.forEach(item => {
+      const row = h('div', { style: { display:'flex', alignItems:'center', gap:'10px', padding:'10px 0', borderBottom:`1px solid ${T.sand}` }});
+      row.appendChild(h('span', { style: { fontSize:'22px' }}, item.emoji));
+      row.appendChild(h('div', { style: { flex:'1' }},
+        h('div', { style: { fontWeight:'700', fontSize:'14px', color:T.ink }}, item.name),
+        h('div', { style: { fontSize:'12px', color:T.blue, fontWeight:'600' }}, `${fmt(item.price)} each`),
+      ));
+      const controls = h('div', { style: { display:'flex', alignItems:'center', gap:'8px' }});
+      const decBtn = h('button', { style: { width:'28px', height:'28px', borderRadius:'50%', border:`2px solid ${T.sand}`, background:T.white, fontWeight:'800', fontSize:'16px', display:'flex', alignItems:'center', justifyContent:'center', color:T.ink }}, '−');
+      decBtn.addEventListener('click', () => { decCart(item.id); render(); });
+      controls.appendChild(decBtn);
+      controls.appendChild(h('span', { style: { fontWeight:'800', fontSize:'15px', minWidth:'20px', textAlign:'center' }}, String(item.qty)));
+      const incBtn = h('button', { style: { width:'28px', height:'28px', borderRadius:'50%', border:'none', background:T.blue, fontWeight:'800', fontSize:'16px', display:'flex', alignItems:'center', justifyContent:'center', color:T.white }}, '+');
+      incBtn.addEventListener('click', () => { addToCart(item); render(); });
+      controls.appendChild(incBtn);
+      row.appendChild(controls);
+      row.appendChild(h('span', { style: { fontWeight:'800', fontSize:'14px', color:T.ink, minWidth:'50px', textAlign:'right' }}, fmt(item.price*item.qty)));
+      content.appendChild(row);
+    });
+
+    const noteTA = h('textarea', { placeholder:'Notes / allergies…', rows:'2', style: {
+      width:'100%', marginTop:'14px', padding:'10px 12px', borderRadius:'12px',
+      border:`2px solid ${T.sand}`, fontSize:'13px', resize:'none', outline:'none', color:T.ink, background:T.cream,
+    }});
+    noteTA.value = state.note;
+    noteTA.addEventListener('input', e => { state.note = e.target.value; });
+    noteTA.addEventListener('focus', () => noteTA.style.borderColor = T.blue);
+    noteTA.addEventListener('blur', () => noteTA.style.borderColor = T.sand);
+    content.appendChild(noteTA);
+
+    const totalRow = h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'center', margin:'14px 0 16px' }});
+    totalRow.appendChild(h('span', { style: { fontFamily:"'Bebas Neue',sans-serif", fontSize:'22px', letterSpacing:'1px', color:T.ink }}, 'TOTAL'));
+    totalRow.appendChild(h('span', { style: { fontFamily:"'Bebas Neue',sans-serif", fontSize:'26px', color:T.blue, letterSpacing:'1px' }}, fmt(total)));
+    content.appendChild(totalRow);
+
+    const sendBtn = h('button', { style: {
+      width:'100%', padding:'15px', borderRadius:'14px', border:'none',
+      background:T.blue, color:T.white, fontWeight:'800', fontSize:'16px', letterSpacing:'.5px',
+    }}, '🚀 Send to Kitchen');
+    sendBtn.addEventListener('click', async () => {
+      if (!state.cart.length) return;
+      sendBtn.textContent = 'Sending…';
+      sendBtn.disabled = true;
+      const order = {
+        id: genId(), tableNo: state.tableNo, items: [...state.cart],
+        note: state.note, total, staff: state.user.name,
+        status: 'pending', createdAt: Date.now(),
+      };
+      state.orders.push(order);
+      saveData('tlc-orders', state.orders);
+      state.cart = []; state.tableNo = ''; state.note = ''; state.cartOpen = false;
+      showToast('✅ Order sent to kitchen!');
+    });
+    content.appendChild(sendBtn);
+    return content;
+  });
+}
+
+// ── GENERIC MODAL ────────────────────────────────────────────────────────────
+function renderModal(title, onClose, contentFn) {
+  const overlay = h('div', { style: {
+    position:'fixed', inset:'0', background:'#0d2d7a90', zIndex:'500',
+    display:'flex', alignItems:'flex-end', justifyContent:'center',
+  }});
+  overlay.addEventListener('click', onClose);
+  const panel = h('div', { style: {
+    background:T.cream, borderRadius:'22px 22px 0 0',
+    width:'100%', maxWidth:'480px', maxHeight:'90vh',
+    display:'flex', flexDirection:'column',
+    boxShadow:'0 -8px 40px #0d2d7a50',
+    animation:'slideUp .25s ease', overflow:'hidden',
+  }});
+  panel.addEventListener('click', e => e.stopPropagation());
+  panel.appendChild(checkStrip(10));
+  const hdr = h('div', { style: {
+    padding:'16px 20px 12px', display:'flex', alignItems:'center',
+    borderBottom:`2px solid ${T.sand}`, background:T.white,
+  }});
+  hdr.appendChild(h('span', { style: { fontFamily:"'Bebas Neue',sans-serif", fontSize:'20px', color:T.ink, letterSpacing:'1px' }}, title));
+  const closeBtn = h('button', { style: { marginLeft:'auto', background:'none', border:'none', fontSize:'22px', color:T.muted, lineHeight:'1' }}, '×');
+  closeBtn.addEventListener('click', onClose);
+  hdr.appendChild(closeBtn);
+  panel.appendChild(hdr);
+  const body = h('div', { style: { overflowY:'auto', flex:'1' }});
+  body.appendChild(contentFn());
+  panel.appendChild(body);
+  overlay.appendChild(panel);
+  return overlay;
+}
+
+// ── KITCHEN VIEW ─────────────────────────────────────────────────────────────
+function renderKitchenView() {
+  const active = state.orders.filter(o => o.status !== 'served');
+  const cols = { pending:[], preparing:[], ready:[] };
+  active.forEach(o => { if (cols[o.status]) cols[o.status].push(o); });
+
+  const wrap = h('div', { style: { flex:'1', display:'flex', flexDirection:'column', overflow:'hidden', background:T.paper }});
+
+  // Summary bar
+  const summary = h('div', { style: { display:'flex', gap:'8px', padding:'10px 12px', background:T.white, borderBottom:`2px solid ${T.sand}`, flexShrink:'0', overflowX:'auto' }});
+  ['pending','preparing','ready'].forEach(status => {
+    const s = STATUS[status];
+    const pill = h('div', { style: { display:'flex', alignItems:'center', gap:'6px', flexShrink:'0', padding:'5px 12px', borderRadius:'20px', background:s.bg, border:`1.5px solid ${s.color}40` }});
+    pill.appendChild(h('span', { style: { fontWeight:'800', fontSize:'12px', color:s.color }}, s.label.replace(' 🔔','')));
+    pill.appendChild(h('span', { style: { background:s.color, color:T.white, borderRadius:'10px', padding:'0 7px', fontSize:'11px', fontWeight:'900' }}, String(cols[status].length)));
+    summary.appendChild(pill);
+  });
+  summary.appendChild(h('div', { style: { marginLeft:'auto', fontSize:'12px', color:T.muted, alignSelf:'center', flexShrink:'0', fontWeight:'700' }}, `${active.length} active`));
+  wrap.appendChild(summary);
+
+  if (!active.length) {
+    const empty = h('div', { style: { flex:'1', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:'10px' }});
+    empty.appendChild(h('div', { innerHTML: logoSVG(72) }));
+    empty.appendChild(h('div', { style: { fontFamily:"'Bebas Neue',sans-serif", fontSize:'22px', color:T.muted, letterSpacing:'2px' }}, 'ALL CAUGHT UP!'));
+    wrap.appendChild(empty);
+  } else {
+    const list = h('div', { style: { flex:'1', overflowY:'auto', padding:'12px', display:'flex', flexDirection:'column', gap:'10px' }});
+    ['pending','preparing','ready'].flatMap(s => cols[s]).forEach(order => {
+      list.appendChild(renderKitchenCard(order));
+    });
+    wrap.appendChild(list);
+  }
+  return wrap;
+}
+
+function renderKitchenCard(order) {
+  const cfg = STATUS[order.status];
+  const age = Math.floor((Date.now() - order.createdAt) / 60000);
+  const urgent = order.status === 'pending' && age >= 5;
+
+  const card = h('div', { style: { background:T.white, borderRadius:'16px', overflow:'hidden', border:`2px solid ${urgent?'#ef4444':cfg.color}50`, boxShadow:`0 3px 16px ${cfg.color}18` }});
+  card.appendChild(h('div', { style: { height:'4px', background: urgent?'#ef4444':cfg.color }}));
+
+  const body = h('div', { style: { padding:'12px 14px' }});
+  const top = h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:'6px' }});
+  const left = h('div', {},
+    h('div', { style: { fontFamily:"'Bebas Neue',sans-serif", fontSize:'20px', color:T.ink, letterSpacing:'.5px' }}, order.tableNo ? `TABLE ${order.tableNo}` : 'TAKE-AWAY'),
+    h('div', { style: { fontSize:'11px', color:T.muted, marginTop:'1px' }}, `${order.staff} · ${age}m ago${urgent?' ⚠️':''}`),
+  );
+  top.appendChild(left);
+  top.appendChild(badge(order.status));
+  body.appendChild(top);
+
+  order.items.forEach(item => {
+    const row = h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'center', padding:'5px 0', borderBottom:`1px solid ${T.paper}`, fontSize:'13px' }});
+    row.appendChild(h('span', { style: { color:T.ink }}, `${item.emoji} ${item.name}`));
+    row.appendChild(h('span', { style: { fontWeight:'800', color:T.blue }}, `×${item.qty}`));
+    body.appendChild(row);
+  });
+
+  if (order.note) {
+    body.appendChild(h('div', { style: { marginTop:'8px', background:'#fff8e6', border:'1px solid #f59e0b40', borderRadius:'8px', padding:'6px 10px', fontSize:'12px', color:'#92400e', fontWeight:'600' }}, `⚠️ ${order.note}`));
+  }
+  card.appendChild(body);
+
+  if (cfg.next) {
+    const nextCfg = STATUS[cfg.next];
+    const btn = h('button', { style: {
+      width:'100%', padding:'11px', border:'none', background:nextCfg.color, color:T.white,
+      fontWeight:'800', fontSize:'13px',
+    }}, `→ Mark as ${nextCfg.label}`);
+    btn.addEventListener('click', () => {
+      const o = state.orders.find(x => x.id === order.id);
+      if (o) { o.status = cfg.next; saveData('tlc-orders', state.orders); showToast(`Marked as ${nextCfg.label}`); }
+    });
+    card.appendChild(btn);
+  }
+  return card;
+}
+
+// ── ADMIN VIEW ───────────────────────────────────────────────────────────────
+function renderAdminView() {
+  const wrap = h('div', { style: { flex:'1', display:'flex', flexDirection:'column', overflow:'hidden' }});
+
+  // Tabs
+  const tabs = h('div', { style: { background:T.white, borderBottom:`2px solid ${T.sand}`, display:'flex', padding:'6px 10px', gap:'6px', flexShrink:'0' }});
+  [['orders','📋 Orders'],['menu','🍽️ Menu'],['stats','📊 Stats']].forEach(([v,l]) => {
+    const active = state.adminTab === v;
+    const btn = h('button', { style: {
+      flex:'1', padding:'9px 4px', borderRadius:'10px',
+      border:`2px solid ${active?T.blue:T.sand}`,
+      fontWeight:'800', fontSize:'13px', transition:'all .15s',
+      background: active?T.blue:T.cream, color: active?T.white:T.muted,
+    }}, l);
+    btn.addEventListener('click', () => { state.adminTab = v; if (v==='menu') { state.menuDraft = JSON.parse(JSON.stringify(state.menu)); state.menuActiveCat = state.menuDraft.categories[0]||''; } render(); });
+    tabs.appendChild(btn);
+  });
+  wrap.appendChild(tabs);
+
+  if (state.adminTab === 'orders') wrap.appendChild(renderAdminOrders());
+  else if (state.adminTab === 'menu') wrap.appendChild(renderMenuEditor());
+  else if (state.adminTab === 'stats') wrap.appendChild(renderAdminStats());
+  return wrap;
+}
+
+function renderAdminOrders() {
+  const container = h('div', { style: { flex:'1', overflowY:'auto', padding:'12px', background:T.cream }});
+  if (!state.orders.length) {
+    container.appendChild(h('div', { style: { textAlign:'center', color:T.muted, padding:'40px' }}, 'No orders yet'));
+    return container;
+  }
+  [...state.orders].reverse().forEach(order => {
+    const card = h('div', { style: { background:T.white, borderRadius:'14px', padding:'12px 14px', marginBottom:'8px', border:`2px solid ${T.sand}` }});
+    const top = h('div', { style: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'4px' }});
+    top.appendChild(h('span', { style: { fontFamily:"'Bebas Neue',sans-serif", fontSize:'16px', color:T.ink, letterSpacing:'.5px' }}, `${order.tableNo?'TABLE '+order.tableNo:'TAKE-AWAY'} · #${order.id.slice(-4).toUpperCase()}`));
+    top.appendChild(badge(order.status));
+    card.appendChild(top);
+    card.appendChild(h('div', { style: { fontSize:'11px', color:T.muted, marginBottom:'6px' }}, `${new Date(order.createdAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})} · ${order.staff}`));
+    card.appendChild(h('div', { style: { fontSize:'12px', color:T.muted, marginBottom:'6px' }}, order.items.map(i=>`${i.emoji} ${i.name}×${i.qty}`).join(' · ')));
+    card.appendChild(h('div', { style: { fontFamily:"'Bebas Neue',sans-serif", fontSize:'18px', color:T.blue, letterSpacing:'.5px' }}, fmt(order.total)));
+    container.appendChild(card);
+  });
+  return container;
+}
+
+function renderAdminStats() {
+  const today = state.orders.filter(o => new Date(o.createdAt).toDateString() === new Date().toDateString());
+  const revenue = today.reduce((s,o) => s+o.total, 0);
+  const container = h('div', { style: { flex:'1', overflowY:'auto', padding:'12px', background:T.cream }});
+  const grid = h('div', { style: { display:'grid', gridTemplateColumns:'1fr 1fr', gap:'10px', marginBottom:'12px' }});
+  [
+    {icon:'📋',label:"Today's Orders",value:today.length},
+    {icon:'💰',label:"Today's Revenue",value:fmt(revenue)},
+    {icon:'📊',label:'Avg Order',value:today.length?fmt(revenue/today.length):'R0.00'},
+    {icon:'🏆',label:'All Orders',value:state.orders.length},
+  ].forEach(s => {
+    grid.appendChild(h('div', { style: { background:T.white, borderRadius:'16px', padding:'16px', border:`2px solid ${T.sand}` }},
+      h('div', { style: { fontSize:'26px', marginBottom:'4px' }}, s.icon),
+      h('div', { style: { fontFamily:"'Bebas Neue',sans-serif", fontSize:'24px', color:T.ink, letterSpacing:'.5px' }}, String(s.value)),
+      h('div', { style: { fontSize:'11px', color:T.muted, marginTop:'2px', fontWeight:'600' }}, s.label),
+    ));
+  });
+  container.appendChild(grid);
+
+  const clearBtn = h('button', { style: {
+    width:'100%', padding:'12px', borderRadius:'12px', border:`2px solid #ef444440`,
+    background:'#fff5f5', color:'#ef4444', fontWeight:'700', fontSize:'13px',
+  }}, '🗑️ Clear All Order History');
+  clearBtn.addEventListener('click', () => { if (confirm('Clear ALL orders?')) { state.orders = []; saveData('tlc-orders',[]); showToast('Order history cleared'); } });
+  container.appendChild(clearBtn);
+  return container;
+}
+
+// ── MENU EDITOR ──────────────────────────────────────────────────────────────
+function renderMenuEditor() {
+  if (!state.menuDraft) { state.menuDraft = JSON.parse(JSON.stringify(state.menu)); state.menuActiveCat = state.menuDraft.categories[0]||''; }
+  const draft = state.menuDraft;
+
+  const wrap = h('div', { style: { flex:'1', display:'flex', flexDirection:'column', overflow:'hidden', background:T.cream }});
+
+  // Top
+  const topBar = h('div', { style: { background:T.white, borderBottom:`2px solid ${T.sand}`, padding:'10px 14px', display:'flex', gap:'8px', flexShrink:'0' }});
+  topBar.appendChild(h('span', { style: { fontFamily:"'Bebas Neue',sans-serif", fontSize:'18px', color:T.ink, letterSpacing:'1px', alignSelf:'center' }}, 'MENU EDITOR'));
+  const saveBtn = h('button', { style: { marginLeft:'auto', padding:'8px 18px', borderRadius:'10px', border:'none', background:T.blue, color:T.white, fontWeight:'700', fontSize:'13px' }}, '💾 Save');
+  saveBtn.addEventListener('click', () => {
+    state.menu = JSON.parse(JSON.stringify(draft));
+    saveData('tlc-menu', state.menu);
+    showToast('✅ Menu saved!');
+  });
+  topBar.appendChild(saveBtn);
+  wrap.appendChild(topBar);
+
+  // Category row
+  const catBar = h('div', { style: { background:T.white, borderBottom:`2px solid ${T.sand}`, flexShrink:'0' }});
+  const catRow = h('div', { style: { display:'flex', gap:'6px', padding:'8px 12px', overflowX:'auto' }});
+  draft.categories.forEach(cat => {
+    const active = state.menuActiveCat === cat;
+    const group = h('div', { style: { display:'flex', alignItems:'center', gap:'2px', flexShrink:'0' }});
+    const btn = h('button', { style: {
+      padding:'6px 14px', borderRadius:'20px',
+      border:`2px solid ${active?T.blue:T.sand}`,
+      fontWeight:'800', fontSize:'13px', background: active?T.blue:T.cream, color: active?T.white:T.muted,
+    }}, cat);
+    btn.addEventListener('click', () => { state.menuActiveCat = cat; render(); });
+    group.appendChild(btn);
+    if (active) {
+      const delBtn = h('button', { style: { background:'none', border:'none', color:T.muted, fontSize:'15px', padding:'0 2px' }}, '×');
+      delBtn.addEventListener('click', () => {
+        if (draft.items.filter(i=>i.category===cat).length>0) { alert('Remove all items first.'); return; }
+        draft.categories = draft.categories.filter(c=>c!==cat);
+        state.menuActiveCat = draft.categories[0]||'';
+        render();
+      });
+      group.appendChild(delBtn);
+    }
+    catRow.appendChild(group);
+  });
+  // Add category
+  const addGroup = h('div', { style: { display:'flex', gap:'4px', flexShrink:'0' }});
+  const catInput = h('input', { placeholder:'+ Category', style: { padding:'6px 10px', borderRadius:'20px', border:`2px solid ${T.sand}`, fontSize:'12px', outline:'none', background:T.cream, color:T.ink, width:'100px' }});
+  catInput.value = state.newCatName;
+  catInput.addEventListener('input', e => { state.newCatName = e.target.value; });
+  catInput.addEventListener('keydown', e => { if (e.key==='Enter') addCat(); });
+  function addCat() {
+    const v = state.newCatName.trim();
+    if (!v || draft.categories.includes(v)) return;
+    draft.categories.push(v);
+    state.menuActiveCat = v;
+    state.newCatName = '';
+    render();
+  }
+  addGroup.appendChild(catInput);
+  const addCatBtn = h('button', { style: { padding:'6px 12px', borderRadius:'20px', border:'none', background:T.blue, color:T.white, fontWeight:'700', fontSize:'12px' }}, 'Add');
+  addCatBtn.addEventListener('click', addCat);
+  addGroup.appendChild(addCatBtn);
+  catRow.appendChild(addGroup);
+  catBar.appendChild(catRow);
+  wrap.appendChild(catBar);
+
+  // Items
+  const list = h('div', { style: { flex:'1', overflowY:'auto', padding:'12px' }});
+  draft.items.filter(i=>i.category===state.menuActiveCat).forEach(item => {
+    const row = h('div', { style: { background:T.white, borderRadius:'14px', padding:'12px 14px', marginBottom:'8px', display:'flex', alignItems:'center', gap:'12px', border:`2px solid ${T.sand}` }});
+    row.appendChild(h('span', { style: { fontSize:'26px' }}, item.emoji));
+    row.appendChild(h('div', { style: { flex:'1' }},
+      h('div', { style: { fontWeight:'800', fontSize:'14px', color:T.ink }}, item.name),
+      h('div', { style: { fontSize:'12px', color:T.blue, fontWeight:'700' }}, fmt(item.price)),
+    ));
+    const editBtn = h('button', { style: { padding:'7px 16px', borderRadius:'10px', border:`2px solid ${T.blue}`, background:T.bluePale, fontWeight:'800', fontSize:'12px', color:T.blue }}, 'Edit');
+    editBtn.addEventListener('click', () => { state.editItem = {...item}; render(); });
+    row.appendChild(editBtn);
+    list.appendChild(row);
+  });
+
+  const addItemBtn = h('button', { style: { width:'100%', padding:'13px', borderRadius:'14px', border:`2px dashed ${T.blue}`, background:'transparent', fontWeight:'800', fontSize:'14px', color:T.blue }}, `+ Add Item to ${state.menuActiveCat||'Category'}`);
+  addItemBtn.addEventListener('click', () => { state.editItem = { id:genId(), name:'', category:state.menuActiveCat, price:'', emoji:'🍽️' }; render(); });
+  list.appendChild(addItemBtn);
+  wrap.appendChild(list);
+
+  return wrap;
+}
+
+// ── ITEM EDIT MODAL ──────────────────────────────────────────────────────────
+function renderItemEditModal() {
+  const item = state.editItem;
+  const isNew = !item._existing;
+  // Check if it exists in draft
+  const draft = state.menuDraft || state.menu;
+  const exists = draft.items.some(i => i.id === item.id && i.name);
+
+  return renderModal(exists ? 'Edit Item' : 'Add Item', () => { state.editItem = null; render(); }, () => {
+    const content = h('div', { style: { padding:'14px 20px 28px', display:'flex', flexDirection:'column', gap:'14px' }});
+
+    // Emoji picker
+    const emojiSection = h('div', {});
+    emojiSection.appendChild(h('label', { style: { fontWeight:'800', fontSize:'11px', color:T.muted, letterSpacing:'1.5px', display:'block', marginBottom:'6px' }}, 'EMOJI'));
+    const emojiGrid = h('div', { style: { display:'flex', flexWrap:'wrap', gap:'6px', marginBottom:'8px' }});
+    EMOJIS.forEach(e => {
+      const btn = h('button', { style: { fontSize:'22px', padding:'4px 6px', borderRadius:'10px', background: item.emoji===e?T.blue:T.paper, border:`2px solid ${item.emoji===e?T.blue:'transparent'}` }}, e);
+      btn.addEventListener('click', () => { item.emoji = e; render(); });
+      emojiGrid.appendChild(btn);
+    });
+    emojiSection.appendChild(emojiGrid);
+    const emojiInput = h('input', { placeholder:'Custom emoji', value: item.emoji, style: { width:'100%', padding:'8px 12px', borderRadius:'10px', border:`2px solid ${T.sand}`, fontSize:'14px', outline:'none', background:T.cream }});
+    emojiInput.addEventListener('input', e => { item.emoji = e.target.value; });
+    emojiSection.appendChild(emojiInput);
+    content.appendChild(emojiSection);
+
+    // Name
+    const nameSection = h('div', {});
+    nameSection.appendChild(h('label', { style: { fontWeight:'800', fontSize:'11px', color:T.muted, letterSpacing:'1.5px', display:'block', marginBottom:'6px' }}, 'ITEM NAME'));
+    const nameInput = h('input', { placeholder:'e.g. Flat White', value: item.name, style: { width:'100%', padding:'10px 12px', borderRadius:'10px', border:`2px solid ${T.sand}`, fontSize:'15px', outline:'none', color:T.ink, background:T.cream }});
+    nameInput.addEventListener('input', e => { item.name = e.target.value; });
+    nameInput.addEventListener('focus', () => nameInput.style.borderColor = T.blue);
+    nameInput.addEventListener('blur', () => nameInput.style.borderColor = T.sand);
+    nameSection.appendChild(nameInput);
+    content.appendChild(nameSection);
+
+    // Price + Category
+    const row = h('div', { style: { display:'flex', gap:'10px' }});
+    const priceDiv = h('div', { style: { flex:'1' }});
+    priceDiv.appendChild(h('label', { style: { fontWeight:'800', fontSize:'11px', color:T.muted, letterSpacing:'1.5px', display:'block', marginBottom:'6px' }}, 'PRICE (R)'));
+    const priceInput = h('input', { type:'number', step:'0.50', placeholder:'0.00', value: item.price, style: { width:'100%', padding:'10px 12px', borderRadius:'10px', border:`2px solid ${T.sand}`, fontSize:'15px', outline:'none', color:T.ink, background:T.cream }});
+    priceInput.addEventListener('input', e => { item.price = e.target.value; });
+    priceDiv.appendChild(priceInput);
+    row.appendChild(priceDiv);
+
+    const catDiv = h('div', { style: { flex:'1' }});
+    catDiv.appendChild(h('label', { style: { fontWeight:'800', fontSize:'11px', color:T.muted, letterSpacing:'1.5px', display:'block', marginBottom:'6px' }}, 'CATEGORY'));
+    const sel = h('select', { style: { width:'100%', padding:'10px 12px', borderRadius:'10px', border:`2px solid ${T.sand}`, fontSize:'14px', outline:'none', color:T.ink, background:T.cream }});
+    (draft.categories||state.menu.categories).forEach(c => {
+      const opt = h('option', {}, c);
+      if (c === item.category) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener('change', e => { item.category = e.target.value; });
+    catDiv.appendChild(sel);
+    row.appendChild(catDiv);
+    content.appendChild(row);
+
+    // Buttons
+    const btnRow = h('div', { style: { display:'flex', gap:'8px', marginTop:'4px' }});
+    if (exists) {
+      const delBtn = h('button', { style: { padding:'12px 16px', borderRadius:'12px', border:'2px solid #ef444440', background:'#fff5f5', color:'#ef4444', fontWeight:'700', fontSize:'13px' }}, 'Delete');
+      delBtn.addEventListener('click', () => {
+        if (confirm('Delete this item?')) {
+          draft.items = draft.items.filter(i => i.id !== item.id);
+          state.editItem = null;
+          render();
+        }
+      });
+      btnRow.appendChild(delBtn);
+    }
+    const canSave = item.name.trim() && item.price;
+    const saveBtn = h('button', { style: { flex:'1', padding:'13px', borderRadius:'12px', border:'none', background: canSave?T.blue:T.sand, color:T.white, fontWeight:'800', fontSize:'15px' }}, exists?'Save Changes':'Add Item');
+    saveBtn.addEventListener('click', () => {
+      if (!item.name.trim() || !item.price) return;
+      const final = { ...item, price: parseFloat(item.price) };
+      const idx = draft.items.findIndex(i => i.id === final.id);
+      if (idx >= 0) draft.items[idx] = final;
+      else draft.items.push(final);
+      state.editItem = null;
+      render();
+    });
+    btnRow.appendChild(saveBtn);
+    content.appendChild(btnRow);
+    return content;
+  });
+}
+
+// ── TOAST ────────────────────────────────────────────────────────────────────
+function renderToast() {
+  return h('div', { style: {
+    position:'fixed', bottom:'32px', left:'50%', transform:'translateX(-50%)',
+    background:T.blueDeep, color:T.cream, padding:'12px 22px', borderRadius:'14px',
+    fontWeight:'700', fontSize:'13px', zIndex:'9999', boxShadow:'0 8px 28px #0004',
+    whiteSpace:'nowrap', animation:'fadeUp .2s ease',
+  }}, state.toast);
+}
+
+// ── POLLING ──────────────────────────────────────────────────────────────────
+function startPoll() {
+  stopPoll();
+  pollInterval = setInterval(() => {
+    const o = loadData('tlc-orders');
+    if (o) state.orders = o;
+    const m = loadData('tlc-menu');
+    if (m) state.menu = m;
+    render();
+  }, 3500);
+}
+function stopPoll() { clearInterval(pollInterval); }
+
+// ── RENDER ───────────────────────────────────────────────────────────────────
+function render() {
+  const app = $('#app');
+  if (!state.user) { renderSetup(); return; }
+
+  app.innerHTML = '';
+  app.style.height = '100dvh';
+  app.style.display = 'flex';
+  app.style.flexDirection = 'column';
+  app.style.overflow = 'hidden';
+
+  app.appendChild(renderHeader());
+
+  if (state.user.role === 'order') {
+    app.appendChild(renderOrderView());
+    if (state.cartOpen && state.cart.length) app.appendChild(renderCartModal());
+  } else if (state.user.role === 'kitchen') {
+    app.appendChild(renderKitchenView());
+  } else if (state.user.role === 'admin') {
+    app.appendChild(renderAdminView());
+    if (state.editItem) app.appendChild(renderItemEditModal());
+  }
+
+  if (state.toast) app.appendChild(renderToast());
+}
+
+// ── INIT ─────────────────────────────────────────────────────────────────────
+render();
+</script>
+</body>
+</html>
